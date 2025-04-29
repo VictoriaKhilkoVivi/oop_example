@@ -10,6 +10,10 @@ import uuid
 from argparse import ArgumentParser
 from dataclasses import dataclass, Field
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import List
+
+import scoring
+
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
@@ -38,7 +42,7 @@ GENDERS = {
 
 
 @dataclass
-class CharField(object):
+class CharField(str):
     pass
 
 
@@ -48,131 +52,135 @@ class EmailField(CharField):
 
 
 @dataclass
-class PhoneField(object):
+class PhoneField(CharField):
     pass
 
 
 @dataclass
-class DateField(object):
+class DateField(Field):
     pass
 
 
 @dataclass
-class BirthDayField(object):
+class BirthDayField(Field):
     pass
 
 
 @dataclass
-class GenderField(object):
+class GenderField(Field):
     pass
 
 
 @dataclass
-class ClientIDsField(Field):
+class ClientIDsField(List):
+    type = List[int]
+
+
+@dataclass
+class ClientsInterestsRequest:
+    client_ids: ClientIDsField
+    date: DateField = None
+
+
+@dataclass
+class OnlineScoreRequest:
+    first_name: CharField = None
+    last_name: CharField = None
+    email: EmailField = None
+    phone: PhoneField = None
+    birthday: BirthDayField = None
+    gender: GenderField = None
+
+
+@dataclass
+class ArgumentsField(Field):
     pass
 
 
 @dataclass
-class ClientsInterestsRequest(object):
-    client_ids = ClientIDsField(required=True)
-    date = DateField(required=False, nullable=True)
-
-
-@dataclass
-class OnlineScoreRequest(object):
-    first_name = CharField(required=False, nullable=True)
-    last_name = CharField(required=False, nullable=True)
-    email = EmailField(required=False, nullable=True)
-    phone = PhoneField(required=False, nullable=True)
-    birthday = BirthDayField(required=False, nullable=True)
-    gender = GenderField(required=False, nullable=True)
-
-
-@dataclass
-class ArgumentsField(object):
-    pass
-
-
-@dataclass
-class MethodRequest(object):
-    account = CharField(required=False, nullable=True)
-    login = CharField(required=True, nullable=True)
-    token = CharField(required=True, nullable=True)
-    arguments = ArgumentsField(required=True, nullable=True)
-    method = CharField(required=True, nullable=False)
+class MethodRequest:
+    login: CharField
+    token: CharField
+    arguments: ArgumentsField
+    method: CharField
+    account: CharField = None
 
     @property
     def is_admin(self):
         return self.login == ADMIN_LOGIN
 
 
-class Handler:
-    def get_result(self, request, ctx, store):
-        response, code = None, None
-        if not request or not ctx or not store:
-            return None, INVALID_REQUEST
+class MainHandler(BaseHTTPRequestHandler):
+    @staticmethod
+    def get_result(request, context, settings):
+        # Проверка на наличие необходимых полей в запросе
         try:
-            body: MethodRequest = request.body
-        except:
-            return None, INVALID_REQUEST
-        return response, code
+            request: MethodRequest = MethodRequest(**request.get('body'))
+        except TypeError as e:
+            # if not request.get('account') or not request.get('login') or not request.method:
+            return {'Пропущены поля'}, INVALID_REQUEST
 
+        # Аутентификация
+        if not MainHandler.is_valid_auth(request):
+            return {}, FORBIDDEN
 
-def check_auth(request):
-    if request.is_admin:
-        digest = hashlib.sha512((datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).encode('utf-8')).hexdigest()
-    else:
-        digest = hashlib.sha512((request.account + request.login + SALT).encode('utf-8')).hexdigest()
-    return digest == request.token
+        # Обработка методов
+        if request.method == "online_score":
+            return MainHandler.handle_online_score(request, context)
+        elif request.method == "clients_interests":
+            return MainHandler.handle_clients_interests(request, context)
 
+        return {'Ошибка обработки методов'}, INVALID_REQUEST
 
-def method_handler(request, ctx, store):
-    response, code = None, None
-    return response, code
-
-
-class MainHTTPHandler(BaseHTTPRequestHandler):
-    router = {
-        "method": method_handler
-    }
-    store = None
-
-    def get_request_id(self, headers):
-        return headers.get('HTTP_X_REQUEST_ID', uuid.uuid4().hex)
-
-    def do_POST(self):
-        response, code = {}, OK
-        context = {"request_id": self.get_request_id(self.headers)}
-        request = None
-        try:
-            data_string = self.rfile.read(int(self.headers['Content-Length']))
-            request = json.loads(data_string)
-        except:
-            code = BAD_REQUEST
-
-        if request:
-            path = self.path.strip("/")
-            logging.info("%s: %s %s" % (self.path, data_string, context["request_id"]))
-            if path in self.router:
-                try:
-                    response, code = self.router[path]({"body": request, "headers": self.headers}, context, self.store)
-                except Exception as e:
-                    logging.exception("Unexpected error: %s" % e)
-                    code = INTERNAL_ERROR
-            else:
-                code = NOT_FOUND
-
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        if code not in ERRORS:
-            r = {"response": response, "code": code}
+    @staticmethod
+    def is_valid_auth(request: MethodRequest):
+        if request.login == ADMIN_LOGIN:
+            expected_token = hashlib.sha512(
+                (datetime.datetime.now().strftime("%Y%m%d%H") + ADMIN_SALT).encode('utf-8')
+            ).hexdigest()
+            return request.token == expected_token
         else:
-            r = {"error": response or ERRORS.get(code, "Unknown Error"), "code": code}
-        context.update(r)
-        logging.info(context)
-        self.wfile.write(json.dumps(r).encode('utf-8'))
-        return
+            msg = f'{request.account}{request.login}{SALT}'.encode('utf-8')
+            expected_token = hashlib.sha512(msg).hexdigest()
+            return request.token == expected_token
+
+    @staticmethod
+    def handle_online_score(request, context):
+        try:
+            OnlineScoreRequest(**request.arguments)
+        except TypeError as e:
+            return {'Пропущены поля'}, INVALID_REQUEST
+
+        arguments = request.arguments
+        # Здесь должна быть логика для расчета "online_score"
+        if request.login == ADMIN_LOGIN:
+            score = int(ADMIN_SALT)
+            return {"score": score}, OK
+        print(arguments)
+        score = scoring.get_score(**arguments)
+        context["has"] = arguments.keys()
+        return {"score": score}, OK
+
+    @staticmethod
+    def handle_clients_interests(request, context):
+        try:
+            args = ClientsInterestsRequest(**request.arguments)
+            if type(args.client_ids) != list[int]:
+                return {'Пропущены поля'}, INVALID_REQUEST
+        except TypeError as e:
+            return {'Пропущены поля'}, INVALID_REQUEST
+
+        arguments = request.arguments
+        client_ids = arguments.get("client_ids")
+        if not client_ids:
+            return {'Пропущено поле client_ids'}, INVALID_REQUEST
+
+        # client_ids = arguments.get("client_ids", [])
+        # Здесь должна быть логика для получения интересов клиентов
+        interests = {client_id: scoring.get_interests() for client_id in client_ids}
+        # interests = scoring.get_interests(**arguments)
+        context["nclients"] = len(client_ids)
+        return interests, OK
 
 
 if __name__ == "__main__":
@@ -182,7 +190,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     logging.basicConfig(filename=args.log, level=logging.INFO,
                         format='[%(asctime)s] %(levelname).1s %(message)s', datefmt='%Y.%m.%d %H:%M:%S')
-    server = HTTPServer(("localhost", args.port), MainHTTPHandler)
+    server = HTTPServer(("localhost", args.port), MainHandler)
     logging.info("Starting server at %s" % args.port)
     try:
         server.serve_forever()

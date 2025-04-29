@@ -24,7 +24,7 @@ class TestSuite(unittest.TestCase):
         self.settings = {}
 
     def get_response(self, request):
-        return api.Handler.get_result({"body": request, "headers": self.headers}, self.context, self.settings)
+        return api.MainHandler.get_result({"body": request, "headers": self.headers}, self.context, self.settings)
 
     def set_valid_auth(self, request):
         if request.get("login") == api.ADMIN_LOGIN:
