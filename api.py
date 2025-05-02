@@ -1,16 +1,14 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import abc
-import json
 import datetime
+import enum
 import logging
 import hashlib
-import uuid
 from argparse import ArgumentParser
-from dataclasses import dataclass, Field
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import List
+from typing import List, Annotated, Union, Optional
+from pydantic import BaseModel, Field, model_validator
 
 import scoring
 
@@ -31,79 +29,59 @@ ERRORS = {
     INVALID_REQUEST: "Invalid Request",
     INTERNAL_ERROR: "Internal Server Error",
 }
-UNKNOWN = 0
-MALE = 1
-FEMALE = 2
-GENDERS = {
-    UNKNOWN: "unknown",
-    MALE: "male",
-    FEMALE: "female",
-}
 
 
-@dataclass
-class CharField(str):
-    pass
+PhoneFieldStr = Annotated[str, Field(max_length=11, min_length=11, pattern=r'^7.*')]
+PhoneFieldInt = Annotated[int, Field(le=79999999999, ge=70000000000)]
+EmailField = Annotated[str, Field(pattern=r'.@.')]
+StrField = Annotated[str, Field()]
+DateField = Annotated[str, Field(pattern=r'\d\d\.\d\d.\d\d\d\d')]
+ClientIDsField = Annotated[List[int], Field()]
 
 
-@dataclass
-class EmailField(CharField):
-    pass
+class GenderEnum(enum.Enum):
+    UNKNOWN = 0
+    MALE = 1
+    FEMALE = 2
 
 
-@dataclass
-class PhoneField(CharField):
-    pass
+class ClientsInterestsRequest(BaseModel):
+    client_ids: Optional[ClientIDsField] = None
+    date: Optional[DateField] = None
 
 
-@dataclass
-class DateField(Field):
-    pass
+class OnlineScoreRequest(BaseModel):
+    first_name: Optional[StrField] = None
+    last_name: Optional[StrField] = None
+    email: Optional[EmailField] = None
+    phone: Optional[Union[PhoneFieldInt, PhoneFieldStr]] = None
+    birthday: Optional[DateField] = None
+    gender: Optional[GenderEnum] = None
+
+    @model_validator(mode='after')
+    def check_data(self):
+        first_name = self.first_name
+        last_name = self.last_name
+
+        email = self.email
+        phone = self.phone
+
+        birthday = self.birthday
+        gender = self.gender
+
+        if (first_name is None or last_name is None)\
+                and (email is None or phone is None)\
+                and (birthday is None or gender is None):
+            return None
+        return self
 
 
-@dataclass
-class BirthDayField(Field):
-    pass
-
-
-@dataclass
-class GenderField(Field):
-    pass
-
-
-@dataclass
-class ClientIDsField(List):
-    type = List[int]
-
-
-@dataclass
-class ClientsInterestsRequest:
-    client_ids: ClientIDsField
-    date: DateField = None
-
-
-@dataclass
-class OnlineScoreRequest:
-    first_name: CharField = None
-    last_name: CharField = None
-    email: EmailField = None
-    phone: PhoneField = None
-    birthday: BirthDayField = None
-    gender: GenderField = None
-
-
-@dataclass
-class ArgumentsField(Field):
-    pass
-
-
-@dataclass
-class MethodRequest:
-    login: CharField
-    token: CharField
-    arguments: ArgumentsField
-    method: CharField
-    account: CharField = None
+class MethodRequest(BaseModel):
+    account: Optional[StrField] = None
+    login: StrField = ''
+    method: StrField = ''
+    token: StrField = ''
+    arguments: Union[OnlineScoreRequest, ClientsInterestsRequest] = None
 
     @property
     def is_admin(self):
@@ -114,11 +92,7 @@ class MainHandler(BaseHTTPRequestHandler):
     @staticmethod
     def get_result(request, context, settings):
         # Проверка на наличие необходимых полей в запросе
-        try:
-            request: MethodRequest = MethodRequest(**request.get('body'))
-        except TypeError as e:
-            # if not request.get('account') or not request.get('login') or not request.method:
-            return {'Пропущены поля'}, INVALID_REQUEST
+        request: MethodRequest = MethodRequest(**request.get('body'))
 
         # Аутентификация
         if not MainHandler.is_valid_auth(request):
@@ -146,39 +120,29 @@ class MainHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def handle_online_score(request, context):
-        try:
-            OnlineScoreRequest(**request.arguments)
-        except TypeError as e:
-            return {'Пропущены поля'}, INVALID_REQUEST
-
         arguments = request.arguments
-        # Здесь должна быть логика для расчета "online_score"
+        if type(arguments) != OnlineScoreRequest:
+            return {'Пропущены все поля'}, INVALID_REQUEST
         if request.login == ADMIN_LOGIN:
             score = int(ADMIN_SALT)
             return {"score": score}, OK
-        print(arguments)
-        score = scoring.get_score(**arguments)
-        context["has"] = arguments.keys()
+        score = scoring.get_score(arguments)
+        has = []
+        for key, value in arguments.__dict__.items():
+            if value:
+                has.append(key)
+        context["has"] = has
         return {"score": score}, OK
 
     @staticmethod
     def handle_clients_interests(request, context):
-        try:
-            args = ClientsInterestsRequest(**request.arguments)
-            if type(args.client_ids) != list[int]:
-                return {'Пропущены поля'}, INVALID_REQUEST
-        except TypeError as e:
-            return {'Пропущены поля'}, INVALID_REQUEST
-
         arguments = request.arguments
-        client_ids = arguments.get("client_ids")
+        if not arguments:
+            return {'Пропущены все поля'}, INVALID_REQUEST
+        client_ids = arguments.client_ids
         if not client_ids:
             return {'Пропущено поле client_ids'}, INVALID_REQUEST
-
-        # client_ids = arguments.get("client_ids", [])
-        # Здесь должна быть логика для получения интересов клиентов
         interests = {client_id: scoring.get_interests() for client_id in client_ids}
-        # interests = scoring.get_interests(**arguments)
         context["nclients"] = len(client_ids)
         return interests, OK
 

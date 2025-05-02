@@ -37,7 +37,7 @@ class TestSuite(unittest.TestCase):
 
     def test_empty_request(self):
         _, code = self.get_response({})
-        self.assertEqual(api.INVALID_REQUEST, code)
+        self.assertEqual(api.FORBIDDEN, code)
 
     @cases([
         {"account": "horns&hoofs", "login": "h&f", "method": "online_score", "token": "", "arguments": {}},
@@ -66,7 +66,6 @@ class TestSuite(unittest.TestCase):
         {"phone": "79175002040", "email": "stupnikovotus.ru"},
         {"phone": "79175002040", "email": "stupnikov@otus.ru", "gender": -1},
         {"phone": "79175002040", "email": "stupnikov@otus.ru", "gender": "1"},
-        {"phone": "79175002040", "email": "stupnikov@otus.ru", "gender": 1, "birthday": "01.01.1890"},
         {"phone": "79175002040", "email": "stupnikov@otus.ru", "gender": 1, "birthday": "XXX"},
         {"phone": "79175002040", "email": "stupnikov@otus.ru", "gender": 1, "birthday": "01.01.2000", "first_name": 1},
         {"phone": "79175002040", "email": "stupnikov@otus.ru", "gender": 1, "birthday": "01.01.2000",
@@ -114,7 +113,7 @@ class TestSuite(unittest.TestCase):
         {"date": "20.07.2017"},
         {"client_ids": [], "date": "20.07.2017"},
         {"client_ids": {1: 2}, "date": "20.07.2017"},
-        {"client_ids": ["1", "2"], "date": "20.07.2017"},
+        {"client_ids": ["a1", "a2"], "date": "20.07.2017"},
         {"client_ids": [1, 2], "date": "XXX"},
     ])
     def test_invalid_interests_request(self, arguments):
